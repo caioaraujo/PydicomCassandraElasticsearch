@@ -1,0 +1,29 @@
+-- Script de criação do keyspace dicom:
+
+CREATE KEYSPACE dicom
+  WITH REPLICATION = {
+   'class' : 'SimpleStrategy',
+   'replication_factor' : 1
+  };
+
+-- Criação da tabela patient
+
+CREATE TABLE patient (
+   id text,
+   name text,
+   sex text,
+   age text,
+   weight text,
+   PRIMARY KEY (id)
+);
+
+-- Criação da tabela study
+
+CREATE TABLE study (
+   id text,
+   instance_uid text,
+   description text,
+   date text,
+   time text,
+   PRIMARY KEY (id)
+);
