@@ -9,21 +9,20 @@ CREATE KEYSPACE dicom
 -- Criação da tabela patient
 
 CREATE TABLE patient (
-   id text,
-   name text,
-   sex text,
-   age text,
-   weight text,
-   PRIMARY KEY (id)
+   patient_id text PRIMARY KEY,
+   image map<text,text>
 );
 
 -- Criação da tabela study
 
 CREATE TABLE study (
-   id text,
-   instance_uid text,
-   description text,
-   date text,
-   time text,
-   PRIMARY KEY (id)
+   study_uid text PRIMARY KEY,
+   series map<text,text>
+);
+
+-- Criação da tabela image
+
+CREATE TABLE image (
+   sop_instance_uid text PRIMARY KEY,
+   image map<text,text>
 );
