@@ -9,6 +9,7 @@ import pydicom
 from cassandra.cluster import Cluster
 from elasticsearch_dsl import Document, Text
 from elasticsearch_dsl.connections import connections
+from pydicom.multival import MultiValue
 
 
 class DicomDoc(Document):
@@ -38,7 +39,7 @@ def __validate_dir(path):
 
     return path
 
-def __insert_postgres(dicom_data):
+def __insert_into_postgres(dicom_data):
     patient_birth_date=None
     patient_weight=None
 
@@ -105,32 +106,67 @@ def __insert_postgres(dicom_data):
     if not series_pk:
         series_pk = __insert_series(series)
 
+    manufacturer_name = None
+    if dicom_data.get('Manufacturer'):
+        manufacturer_name = str(dicom_data.get('Manufacturer'))
+
     manufacturer = dict(
-        name=dicom_data.get('Manufacturer')
+        name=manufacturer_name
     )
+
+    manufacturer_pk = None
+    if manufacturer_name:
+        manufacturer_pk = get_pk("""select pk from manufacturer where name = %s""", manufacturer.get('name'))
+
+        if not manufacturer_pk:
+            manufacturer_pk = __insert_manufacturer(manufacturer)
+
+    last_calibration_date = None
+    if dicom_data.get('DateOfLastCalibration'):
+        last_calibration_date = datetime.datetime.strptime(dicom_data.get('DateOfLastCalibration'), '%Y%m%d').date()
 
     equipment = dict(
         software_version=dicom_data.get('SoftwareVersions'),
-        last_calibration_date=dicom_data.get('DateOfLastCalibration'),
+        last_calibration_date=last_calibration_date,
         last_calibration_time=dicom_data.get('TimeOfLastCalibration'),
-        manufacturer_model_name=dicom_data.get('ManufacturerModelName'),
+        manufacturer_model_name=str(dicom_data.get('ManufacturerModelName')),
         station_name=dicom_data.get('StationName'),
-        manufacturer_fk=0
+        manufacturer_fk=manufacturer_pk
     )
+
+    equipment_pk = None
+    if dicom_data.get('ManufacturerModelName'):
+        equipment_pk = get_pk("""select pk from equipment where manufacturer_model_name = %s""", equipment.get('manufacturer_model_name'))
+
+        if not equipment_pk:
+            equipment_pk = __insert_equipment(equipment)
+
+    acquisition_date = None
+    if dicom_data.get('AcquisitionDate'):
+        acquisition_date = datetime.datetime.strptime(dicom_data.get('AcquisitionDate'), '%Y%m%d').date()
+
+    kvp = None
+    if dicom_data.get('KVP'):
+        kvp = Decimal(dicom_data.get('KVP'))
 
     image = dict(
         sop_instance_uid=dicom_data.get('SOPInstanceUID'),
         sop_class_uid=dicom_data.get('SOPClassUID'),
-        acquisition_date=dicom_data.get('AcquisitionDate'),
+        acquisition_date=acquisition_date,
         acquisition_time=dicom_data.get('AcquisitionTime'),
-        kvp=dicom_data.get('KVP'),
+        kvp=round(kvp, 2) if kvp else None,
         exposure_time=dicom_data.get('ExposureTime'),
         exposure=dicom_data.get('Exposure'),
         x_ray_tube_current=dicom_data.get('XRayTubeCurrent'),
-        image_type=dicom_data.get('ImageType'),
-        series_fk=0,
-        equipment_fk=0
+        image_type=dicom_data.get('ImageType')[0] if type(dicom_data.get('ImageType') is MultiValue) else None,
+        series_fk=series_pk,
+        equipment_fk=equipment_pk
     )
+
+    image_pk = get_pk("""select pk from image where sop_instance_uid = %s""", image.get('sop_instance_uid'))
+
+    if not image_pk:
+        __insert_image(image)
 
 
 def __insert_patient(patient):
@@ -139,12 +175,12 @@ def __insert_patient(patient):
     VALUES (%s, %s, %s, %s, %s) RETURNING PK;
     """
 
-    patient_pk = None
+    pk = None
     try:
         conn = __connect_postgres()
         cur = conn.cursor()
         cur.execute(dml, (patient.get('id'), patient.get('name'), patient.get('sex'), patient.get('weight'), patient.get('birth_date')))
-        patient_pk = cur.fetchone()[0]
+        pk = cur.fetchone()[0]
         conn.commit()
         cur.close()
     except (Exception, psycopg2.DatabaseError) as error:
@@ -153,7 +189,7 @@ def __insert_patient(patient):
         if conn is not None:
             conn.close()
 
-    return patient_pk
+    return pk
 
 
 def __insert_study(study):
@@ -164,14 +200,14 @@ def __insert_study(study):
     VALUES (%s, %s, %s, %s, %s) RETURNING PK;
     """
 
-    study_pk = None
+    pk = None
     try:
         conn = __connect_postgres()
         cur = conn.cursor()
         cur.execute(dml, (study.get('instance_uid'), study.get('description'), study.get('date'),
                           #study.get('time'),
                           study.get('id'), study.get('patient_fk')))
-        study_pk = cur.fetchone()[0]
+        pk = cur.fetchone()[0]
         conn.commit()
         cur.close()
     except (Exception, psycopg2.DatabaseError) as error:
@@ -180,7 +216,7 @@ def __insert_study(study):
         if conn is not None:
             conn.close()
 
-    return study_pk
+    return pk
 
 
 def __insert_series(series):
@@ -191,14 +227,14 @@ def __insert_series(series):
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING PK;
     """
 
-    series_pk = None
+    pk = None
     try:
         conn = __connect_postgres()
         cur = conn.cursor()
         cur.execute(dml, (series.get('instance_uid'), series.get('description'), series.get('date'),
                           series.get('number'), series.get('study_fk'), series.get('body_part_examined'),
                           series.get('requested_procedure_description'), series.get('modality')))
-        series_pk = cur.fetchone()[0]
+        pk = cur.fetchone()[0]
         conn.commit()
         cur.close()
     except (Exception, psycopg2.DatabaseError) as error:
@@ -207,7 +243,90 @@ def __insert_series(series):
         if conn is not None:
             conn.close()
 
-    return series_pk
+    return pk
+
+
+def __insert_manufacturer(manufacturer):
+    dml = """ 
+    INSERT INTO MANUFACTURER (NAME) VALUES (%s) RETURNING PK;
+    """
+
+    pk = None
+    try:
+        conn = __connect_postgres()
+        cur = conn.cursor()
+        cur.execute(dml, (manufacturer.get('name'), ))
+        pk = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return pk
+
+
+def __insert_equipment(equipment):
+    dml = """ 
+    INSERT INTO EQUIPMENT (SOFTWARE_VERSION, LAST_CALIBRATION_DATE,
+    --LAST_CALIBRATION_TIME
+    STATION_NAME,
+    MANUFACTURER_MODEL_NAME,
+    MANUFACTURER_FK
+    ) VALUES (%s, %s, %s, %s, %s) RETURNING PK;
+    """
+
+    pk = None
+    try:
+        conn = __connect_postgres()
+        cur = conn.cursor()
+        cur.execute(dml, (equipment.get('software_version'), equipment.get('last_calibration_date'),
+                          equipment.get('station_name'), equipment.get('manufacturer_model_name'),
+                          equipment.get('manufacturer_fk')))
+        pk = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return pk
+
+
+def __insert_image(image):
+    dml = """ 
+    INSERT INTO IMAGE (SOP_INSTANCE_UID, SERIES_FK, SOP_CLASS_UID, EQUIPMENT_FK, ACQUISITION_DATE,
+    --ACQUISITION_TIME,
+    KVP,
+    EXPOSURE_TIME,
+    EXPOSURE,
+    X_RAY_TUBE_CURRENT,
+    IMAGE_TYPE
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING PK;
+    """
+
+    pk = None
+    try:
+        conn = __connect_postgres()
+        cur = conn.cursor()
+        cur.execute(dml, (image.get('sop_instance_uid'), image.get('series_fk'), image.get('sop_class_uid'),
+                          image.get('equipment_fk'), image.get('acquisition_date'), image.get('kvp'),
+                          image.get('exposure_time'), image.get('exposure'), image.get('x_ray_tube_current'),
+                          image.get('image_type')))
+        pk = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return pk
 
 
 def get_pk(sql, uid):
@@ -367,7 +486,6 @@ if __name__ == '__main__':
 
     session = cluster.connect('dicom')
 
-
     dicom_dict = dict({})
 
     patient_dict = {}
@@ -387,7 +505,7 @@ if __name__ == '__main__':
 
             dicom_dataset = pydicom.dcmread(file)
 
-            __insert_postgres(dicom_dataset)
+            __insert_into_postgres(dicom_dataset)
 
             image_bytes = sys.stdout.buffer.write(base64.b64encode(dicom_dataset.pixel_array))
 
