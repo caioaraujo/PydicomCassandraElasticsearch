@@ -4,6 +4,27 @@ import sys
 
 import pydicom
 from cassandra.cluster import Cluster
+from elasticsearch_dsl import Document, Text
+from elasticsearch_dsl.connections import connections
+
+
+class DicomDoc(Document):
+    data_exame = Text(analyzer='snowball')
+    nome_paciente = Text(analyzer='snowball')
+    descricao_estudo = Text(analyzer='snowball')
+    descricao_serie = Text(analyzer='snowball')
+    data_nasc_paciente = Text(analyzer='snowball')
+    especialidade_exame = Text(analyzer='snowball')
+
+    class Index:
+        name = 'dicom'
+        settings = {
+            "number_of_shards": 2,
+        }
+
+    def save(self, **kwargs):
+        self.lines = len(self.body.split())
+        return super(DicomDoc, self).save(**kwargs)
 
 
 def __validate_dir(path):
@@ -122,6 +143,22 @@ def __insert_into_cassandra(patient_dict, study_dict, image_dict):
         print(f'inseriu imagem {id_image}')
 
 
+def __insert_into_elasticsearch(rowkey, dicom_dataset):
+    connections.create_connection(hosts=['localhost'])
+
+    # create the mappings in elasticsearch
+    DicomDoc.init()
+
+    dicom_doc = DicomDoc(meta={'id': rowkey}, title='Dicom')
+    dicom_doc.data_exame = dicom_dataset.StudyDate
+    dicom_doc.nome_paciente = dicom_dataset.PatientName
+    dicom_doc.descricao_estudo = dicom_dataset.StudyDescription
+    dicom_doc.descricao_serie = dicom_dataset.SeriesDescription
+    dicom_doc.data_nasc_paciente = dicom_dataset.PatientBirthDate
+    dicom_doc.especialidade_exame = dicom_dataset.Modality
+    dicom_doc.save()
+
+
 if __name__ == '__main__':
 
     root = __validate_dir(sys.argv[1])
@@ -161,5 +198,7 @@ if __name__ == '__main__':
             __set_studies(study_dict, dicom_dataset, rowkey)
 
             __set_images(image_dict, dicom_dataset, image_bytes)
+
+            __insert_into_elasticsearch(rowkey, dicom_dataset)
 
     __insert_into_cassandra(patient_dict, study_dict, image_dict)
