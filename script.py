@@ -37,14 +37,89 @@ def __define_column_family(dicom_dataset):
     return rowkey, column_family
 
 
-#def __insert_into_cassandra(cassandra_session):
-#    session.execute(
-#        """
-#        INSERT INTO patient (name, credits, user_id)
-#        VALUES (%s, %s, %s)
-#        """,
-#        ("John O'Reilly", 42, uuid.uuid1())
-#    )
+def __set_patient(patient_dict, dicom_dataset, image_bytes):
+    id_paciente = str(dicom_dataset.PatientID)
+
+    id_image = str(dicom_dataset.SOPInstanceUID)
+
+    image_data = {id_image: str(image_bytes)}
+
+    patient = patient_dict.get(id_paciente)
+
+    if not patient:
+        patient_dict[id_paciente] = image_data
+
+    else:
+        patient[id_image] = str(image_bytes)
+
+
+def __set_studies(study_dict, dicom_dataset, rowkey):
+    study_uid = str(rowkey)
+
+    study = study_dict.get(study_uid)
+
+    series_uid = str(dicom_dataset.SeriesInstanceUID)
+
+    id_image = str(dicom_dataset.SOPInstanceUID)
+
+    if not study:
+        study_dict[study_uid] = {series_uid: [id_image]}
+
+    else:
+        series = study.get(series_uid)
+        if series:
+            series.append(id_image)
+        else:
+            study[series_uid] = [id_image]
+
+
+def __set_images(image_dict, dicom_dataset, image_bytes):
+    id_image = str(dicom_dataset.SOPInstanceUID)
+
+    image = image_dict.get(id_image)
+
+    if not image:
+        image_dict[id_image] = str(image_bytes)
+
+
+def __insert_into_cassandra(patient_dict, study_dict, image_dict):
+
+    # Insere pacientes
+    for id_paciente, images in patient_dict.items():
+
+        session.execute(
+            """
+            INSERT INTO patient (patient_id, image)
+            VALUES (%(id_paciente)s, %(image_data)s)
+            """,
+            {'id_paciente': id_paciente, 'image_data': images}
+        )
+
+        print(f'inseriu paciente {id_paciente}')
+
+    # Insere studies
+    for id_study, series in study_dict.items():
+        session.execute(
+            """
+            INSERT INTO study (study_uid, series)
+            VALUES (%(id_study)s, %(series)s)
+            """,
+            {'id_study': id_study, 'series': series}
+        )
+
+        print(f'inseriu study {id_study}')
+
+    # Insere imagens
+    for id_image, image_bytes in image_dict.items():
+        session.execute(
+            """
+            INSERT INTO image (sop_instance_uid, image_bytes)
+            VALUES (%(id_image)s, %(image_bytes)s)
+            """,
+            {'id_image': id_image, 'image_bytes': image_bytes}
+        )
+
+        print(f'inseriu imagem {id_image}')
 
 
 if __name__ == '__main__':
@@ -57,6 +132,10 @@ if __name__ == '__main__':
     session = cluster.connect('dicom')
 
     dicom_dict = dict({})
+
+    patient_dict = {}
+    study_dict = {}
+    image_dict = {}
 
     for path, subdirs, files in os.walk(root):
         for name in files:
@@ -71,8 +150,16 @@ if __name__ == '__main__':
 
             dicom_dataset = pydicom.dcmread(file)
 
-            compressed_pixel_array = sys.stdout.buffer.write(base64.b64encode(dicom_dataset.pixel_array))
+            image_bytes = sys.stdout.buffer.write(base64.b64encode(dicom_dataset.pixel_array))
 
-            dicom_dataset_dict = __extract_dataset_to_dict(dicom_dict, dicom_dataset, compressed_pixel_array)
+            dicom_dataset_dict = __extract_dataset_to_dict(dicom_dict, dicom_dataset, image_bytes)
 
             rowkey, column_family = __define_column_family(dicom_dataset)
+
+            __set_patient(patient_dict, dicom_dataset, image_bytes)
+
+            __set_studies(study_dict, dicom_dataset, rowkey)
+
+            __set_images(image_dict, dicom_dataset, image_bytes)
+
+    __insert_into_cassandra(patient_dict, study_dict, image_dict)

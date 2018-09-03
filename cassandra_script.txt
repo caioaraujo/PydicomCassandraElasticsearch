@@ -17,12 +17,12 @@ CREATE TABLE patient (
 
 CREATE TABLE study (
    study_uid text PRIMARY KEY,
-   series map<text,text>
+   series map<text, frozen<list<text>>>
 );
 
 -- Criação da tabela image
 
 CREATE TABLE image (
    sop_instance_uid text PRIMARY KEY,
-   image map<text,text>
+   image_bytes text
 );
