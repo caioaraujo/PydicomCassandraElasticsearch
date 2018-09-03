@@ -1,7 +1,7 @@
 /* DICOM_RDB_STORING: */
 
 CREATE TABLE patient (
-    pk INTEGER PRIMARY KEY,
+    pk SERIAL PRIMARY KEY,
     patient_id VARCHAR(64) UNIQUE,
     patient_name VARCHAR(64),
     patient_sex VARCHAR(16),
@@ -11,7 +11,7 @@ CREATE TABLE patient (
 );
 
 CREATE TABLE study (
-    pk INTEGER PRIMARY KEY,
+    pk SERIAL PRIMARY KEY,
     study_instance_uid VARCHAR(64) UNIQUE,
     study_description VARCHAR(64),
     study_date DATE,
@@ -21,7 +21,7 @@ CREATE TABLE study (
 );
 
 CREATE TABLE series (
-    pk INTEGER PRIMARY KEY,
+    pk SERIAL PRIMARY KEY,
     series_instance_uid VARCHAR(64) UNIQUE,
     series_description VARCHAR(64),
     series_date DATE,
@@ -34,7 +34,7 @@ CREATE TABLE series (
 );
 
 CREATE TABLE image (
-    pk INTEGER PRIMARY KEY,
+    pk SERIAL PRIMARY KEY,
     sop_instance_uid VARCHAR(64) UNIQUE,
     series_fk INTEGER,
     sop_class_uid VARCHAR(64),
@@ -49,7 +49,7 @@ CREATE TABLE image (
 );
 
 CREATE TABLE equipment (
-    pk INTEGER PRIMARY KEY,
+    pk SERIAL PRIMARY KEY,
     software_version VARCHAR(64),
     last_calibration_date DATE,
     last_calibration_time TIMESTAMP,
@@ -59,7 +59,7 @@ CREATE TABLE equipment (
 );
 
 CREATE TABLE manufacturer (
-    pk INTEGER PRIMARY KEY,
+    pk SERIAL PRIMARY KEY,
     name VARCHAR(64)
 );
 
