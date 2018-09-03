@@ -1,5 +1,5 @@
-import datetime
 import base64
+import datetime
 import os
 import sys
 from decimal import Decimal
@@ -362,10 +362,10 @@ if __name__ == '__main__':
     root = __validate_dir(sys.argv[1])
 
     # Connect to Cassandra
-    #cluster = Cluster()
+    cluster = Cluster()
 
 
-    #session = cluster.connect('dicom')
+    session = cluster.connect('dicom')
 
 
     dicom_dict = dict({})
