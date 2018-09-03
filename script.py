@@ -17,11 +17,6 @@ def __validate_dir(path):
     return path
 
 def __insert_postgres(dicom_data):
-    patient_pk = None
-    series_fk = None
-    equipment_fk = None
-    manufacturer_fk = None
-    study_fk = None
     patient_birth_date=None
     patient_weight=None
 
@@ -30,7 +25,6 @@ def __insert_postgres(dicom_data):
 
     if dicom_data.get('PatientWeight'):
         patient_weight=Decimal(dicom_data.get('PatientWeight'))
-
 
     patient = dict(
         id=dicom_data.get('PatientID'),
@@ -46,26 +40,48 @@ def __insert_postgres(dicom_data):
     if not patient_pk:
         patient_pk = __insert_patient(patient)
 
+    study_date = None
+    if dicom_data.get('StudyDate'):
+        study_date = datetime.datetime.strptime(dicom_data.get('StudyDate'), '%Y%m%d').date()
+
+    study_time = None
+    #if dicom_data.get('StudyTime'):
+    #    study_time = datetime.datetime.strptime(dicom_data.get('StudyTime'), '%H%M%S').hour()
+
     study = dict(
         instance_uid=dicom_data.get('StudyInstanceUID'),
         description=dicom_data.get('StudyDescription'),
-        date=dicom_data.get('StudyDate'),
-        time=dicom_data.get('StudyTime'),
+        date=study_date,
+        time=study_time,
         id=dicom_data.get('StudyID'),
-        fk=patient_pk
+        patient_fk=patient_pk
     )
 
+    study_pk = get_pk("""select pk from study where study_instance_uid = %s""", study.get('instance_uid'))
+
+    if not study_pk:
+        study_pk = __insert_study(study)
+
+    series_date = None
+    if dicom_data.get('SeriesDate'):
+        series_date = datetime.datetime.strptime(dicom_data.get('SeriesDate'), '%Y%m%d').date()
+
     series = dict(
-        series_instance_uid=dicom_data.get('SeriesInstanceUID'),
-        series_description=dicom_data.get('SeriesDescription'),
-        series_date=dicom_data.get('SeriesDate'),
-        series_time=dicom_data.get('SeriesTime'),
-        series_number=dicom_data.get('SeriesNumber'),
+        instance_uid=dicom_data.get('SeriesInstanceUID'),
+        description=dicom_data.get('SeriesDescription'),
+        date=series_date,
+        time=dicom_data.get('SeriesTime'),
+        number=dicom_data.get('SeriesNumber'),
         body_part_examined=dicom_data.get('BodyPartExamined'),
         requested_procedure_description=dicom_data.get('RequestedProcedureDescription'),
         modality=dicom_data.get('Modality'),
-        study_fk=study_fk
+        study_fk=study_pk
     )
+
+    series_pk = get_pk("""select pk from series where series_instance_uid = %s""", series.get('instance_uid'))
+
+    if not series_pk:
+        series_pk = __insert_series(series)
 
     manufacturer = dict(
         name=dicom_data.get('Manufacturer')
@@ -77,7 +93,7 @@ def __insert_postgres(dicom_data):
         last_calibration_time=dicom_data.get('TimeOfLastCalibration'),
         manufacturer_model_name=dicom_data.get('ManufacturerModelName'),
         station_name=dicom_data.get('StationName'),
-        manufacturer_fk=manufacturer_fk
+        manufacturer_fk=0
     )
 
     image = dict(
@@ -90,8 +106,8 @@ def __insert_postgres(dicom_data):
         exposure=dicom_data.get('Exposure'),
         x_ray_tube_current=dicom_data.get('XRayTubeCurrent'),
         image_type=dicom_data.get('ImageType'),
-        series_fk=series_fk,
-        equipment_fk=equipment_fk
+        series_fk=0,
+        equipment_fk=0
     )
 
 
@@ -118,12 +134,65 @@ def __insert_patient(patient):
     return patient_pk
 
 
+def __insert_study(study):
+    dml = """ 
+    INSERT INTO STUDY (STUDY_INSTANCE_UID, STUDY_DESCRIPTION, STUDY_DATE, 
+    --STUDY_TIME, 
+    STUDY_ID, PATIENT_FK) 
+    VALUES (%s, %s, %s, %s, %s) RETURNING PK;
+    """
+
+    study_pk = None
+    try:
+        conn = __connect_postgres()
+        cur = conn.cursor()
+        cur.execute(dml, (study.get('instance_uid'), study.get('description'), study.get('date'),
+                          #study.get('time'),
+                          study.get('id'), study.get('patient_fk')))
+        study_pk = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return study_pk
+
+
+def __insert_series(series):
+    dml = """ 
+    INSERT INTO SERIES (SERIES_INSTANCE_UID, SERIES_DESCRIPTION, SERIES_DATE, 
+    --SERIES_TIME
+    SERIES_NUMBER, STUDY_FK, BODY_PART_EXAMINED, REQUESTED_PROCEDURE_DESCRIPTION, MODALITY) 
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING PK;
+    """
+
+    series_pk = None
+    try:
+        conn = __connect_postgres()
+        cur = conn.cursor()
+        cur.execute(dml, (series.get('instance_uid'), series.get('description'), series.get('date'),
+                          series.get('number'), series.get('study_fk'), series.get('body_part_examined'),
+                          series.get('requested_procedure_description'), series.get('modality')))
+        series_pk = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return series_pk
+
+
 def get_pk(sql, uid):
     try:
         conn = __connect_postgres()
         cur = conn.cursor()
         cur.execute(sql, (uid,))
-        print("The number of items: ", cur.rowcount)
         row = cur.fetchone()
         pk = None
 
